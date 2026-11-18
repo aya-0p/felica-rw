@@ -20,7 +20,7 @@ jobs:
             runner: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
           - name: Linux arm64
-            runner: ubuntu-24.04
+            runner: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
           - name: Windows x86_64
             runner: windows-latest
@@ -44,16 +44,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libusb-1.0-0-dev libudev-dev libxkbcommon-dev libgtk-3-dev
 
-      - name: Install Linux arm64 cross dependencies
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
-        run: |
-          sudo dpkg --add-architecture arm64
-          sudo apt-get update
-          sudo apt-get install -y \
-            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
-            libusb-1.0-0-dev:arm64 libudev-dev:arm64 \
-            libxkbcommon-dev:arm64 libgtk-3-dev:arm64
-
       - name: Install macOS dependencies
         if: runner.os == 'macOS'
         run: brew install libusb pkg-config
@@ -63,9 +53,6 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Build release
-        env:
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
-          PKG_CONFIG_ALLOW_CROSS: "1"
         run: cargo build --release --target ${{ matrix.target }}
 
       - name: Package Linux or macOS
@@ -86,27 +73,37 @@ jobs:
           Copy-Item README.md, assets/OFL.txt dist/
           Compress-Archive -Path dist/* -DestinationPath felica-rw-${{ matrix.target }}.zip
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: release-${{ matrix.target }}
-          path: |
-            felica-rw-${{ matrix.target }}.tar.gz
-            felica-rw-${{ matrix.target }}.zip
-          if-no-files-found: error
-
-  publish:
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          path: dist
-          merge-multiple: true
-
-      - name: Create GitHub release
+      - name: Upload Linux or macOS release asset
+        if: runner.os != 'Windows'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${GITHUB_REF_NAME}" dist/* \
-            --repo "${GITHUB_REPOSITORY}" \
-            --generate-notes
+          for attempt in 1 2 3 4 5; do
+            if gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+              break
+            fi
+            gh release create "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --generate-notes \
+              --title "${GITHUB_REF_NAME}" >/dev/null 2>&1 || true
+            sleep 2
+          done
+          gh release upload "${GITHUB_REF_NAME}" \
+            "felica-rw-${{ matrix.target }}.tar.gz" \
+            --repo "${GITHUB_REPOSITORY}" --clobber
+
+      - name: Upload Windows release asset
+        if: runner.os == 'Windows'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          for ($attempt = 1; $attempt -le 5; $attempt++) {
+            gh release view "$env:GITHUB_REF_NAME" --repo "$env:GITHUB_REPOSITORY" *> $null
+            if ($LASTEXITCODE -eq 0) { break }
+            gh release create "$env:GITHUB_REF_NAME" --repo "$env:GITHUB_REPOSITORY" `
+              --generate-notes --title "$env:GITHUB_REF_NAME" *> $null
+            if ($LASTEXITCODE -eq 0) { break }
+            Start-Sleep -Seconds 2
+          }
+          gh release upload "$env:GITHUB_REF_NAME" `
+            "felica-rw-${{ matrix.target }}.zip" `
+            --repo "$env:GITHUB_REPOSITORY" --clobber
