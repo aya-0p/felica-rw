@@ -35,7 +35,9 @@ cargo run
 `v*` タグを pushした場合のみ、以下をネイティブ環境でビルドします。
 
 - Linux x86_64
+- Linux arm64
 - Windows x86_64
+- Windows arm64
 - macOS x86_64
 - macOS arm64
 
